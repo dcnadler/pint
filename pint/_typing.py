@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from decimal import Decimal
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Callable, Protocol, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Optional,
+    Protocol,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 from .compat import Never, TypeAlias
 
@@ -29,6 +38,8 @@ else:
 Magnitude = Union[Scalar, Array]
 
 UnitLike = Union[str, dict[str, Scalar], "UnitsContainer", "Unit"]
+
+UnitRoleKeyLike = Union[str, Tuple[str, Optional[str]]]
 
 QuantityOrUnitLike = Union["Quantity", UnitLike]
 

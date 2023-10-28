@@ -9,6 +9,7 @@ from pint import pint_eval
 from pint.util import (
     ParserHelper,
     UnitsContainer,
+    UnitsRolesContainer,
     find_connected_nodes,
     find_shortest_path,
     iterable,
@@ -20,7 +21,7 @@ from pint.util import (
 )
 
 
-class TestUnitsContainer:
+class BaseTestUnitsContainer:
     def _test_inplace(self, operator, value1, value2, expected_result):
         value1 = copy.copy(value1)
         value2 = copy.copy(value2)
@@ -49,6 +50,8 @@ class TestUnitsContainer:
         assert id(result) != id1
         assert id(result) != id2
 
+
+class TestUnitsContainer(BaseTestUnitsContainer):
     def test_unitcontainer_creation(self):
         x = UnitsContainer(meter=1, second=2)
         y = UnitsContainer({"meter": 1, "second": 2})
@@ -127,6 +130,89 @@ class TestUnitsContainer:
             d.__truediv__([])
         with pytest.raises(TypeError):
             d.__rtruediv__([])
+
+
+class TestUnitsRolesContainer(BaseTestUnitsContainer):
+    def test_units_roles_container_creation_without_roles(self):
+        x = UnitsRolesContainer(meter=1, second=2)
+        y = UnitsRolesContainer({"meter": 1, "second": 2})
+        assert isinstance(x["meter"], int)
+        assert x == y
+        assert x is not y
+        z = copy.copy(x)
+        assert x == z
+        assert x is not z
+        z = UnitsRolesContainer(x)
+        assert x == z
+        assert x is not z
+
+    def test_units_roles_container_creation_with_roles(self):
+        x = UnitsRolesContainer({("meter", "water"): 3, "meter": -3})
+        y = UnitsRolesContainer({("meter", "water"): 3}, meter=-3)
+        z = UnitsRolesContainer([(("meter", "water"), 3), (("meter", None), -3)])
+        assert isinstance(x["meter"], int)
+        assert x == y
+        assert x == z
+        assert x is not y
+        c = copy.copy(x)
+        assert x == c
+        assert x is not c
+        a = UnitsRolesContainer(x)
+        assert x == a
+        assert x is not a
+
+    def test_units_roles_container_comp(self):
+        x = UnitsRolesContainer({("meter", "water"): 3, "meter": -3})
+        y = UnitsRolesContainer({("meter", "water"): 3.0, "meter": -3})
+        z = UnitsRolesContainer({("meter", "water"): 3, "meter": -2})
+        d = UnitsRolesContainer({("meter", "salt"): 3, "meter": -3})
+
+        assert x == y
+        assert x != z
+        assert x != d
+
+    def test_units_roles_container_arithmetic(self):
+        x = UnitsRolesContainer({("gram", None): 1})
+        y = UnitsRolesContainer({("meter", "water"): 3})
+        z = UnitsRolesContainer({("gram", "salt"): 1, "meter": -3})
+
+        self._test_not_inplace(
+            op.mul,
+            x,
+            y,
+            UnitsRolesContainer({("gram", None): 1, ("meter", "water"): 3}),
+        )
+        self._test_not_inplace(
+            op.truediv,
+            x,
+            y,
+            UnitsRolesContainer({("gram", None): 1, ("meter", "water"): -3}),
+        )
+        self._test_not_inplace(
+            op.pow, z, 2, UnitsRolesContainer({("gram", "salt"): 2, "meter": -6})
+        )
+        self._test_not_inplace(
+            op.pow, z, -2, UnitsRolesContainer({("gram", "salt"): -2, "meter": 6})
+        )
+
+        self._test_inplace(
+            op.imul,
+            x,
+            y,
+            UnitsRolesContainer({("gram", None): 1, ("meter", "water"): 3}),
+        )
+        self._test_inplace(
+            op.itruediv,
+            x,
+            y,
+            UnitsRolesContainer({("gram", None): 1, ("meter", "water"): -3}),
+        )
+        self._test_inplace(
+            op.ipow, z, 2, UnitsRolesContainer({("gram", "salt"): 2, "meter": -6})
+        )
+        self._test_inplace(
+            op.ipow, z, -2, UnitsRolesContainer({("gram", "salt"): -2, "meter": 6})
+        )
 
 
 class TestToUnitsContainer:

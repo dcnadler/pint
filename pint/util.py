@@ -16,16 +16,26 @@ import operator
 import re
 import tokenize
 import types
+from abc import ABC, abstractmethod
 from collections.abc import Generator, Hashable, Iterable, Iterator, Mapping
 from fractions import Fraction
 from functools import lru_cache, partial
 from logging import NullHandler
 from numbers import Number
 from token import NAME, NUMBER
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Generic,
+    NamedTuple,
+    Optional,
+    TypeVar,
+)
 
 from . import pint_eval
-from ._typing import Scalar
+from ._typing import Scalar, UnitRoleKeyLike
 from .compat import NUMERIC_TYPES, Self
 from .errors import DefinitionSyntaxError
 from .formatting import format_unit
@@ -417,21 +427,31 @@ def find_connected_nodes(
     return visited
 
 
-class udict(dict[str, Scalar]):
+KeyType = TypeVar("KeyType")
+KeyLikeType = TypeVar("KeyLikeType")
+
+
+class UnitRole(NamedTuple):
+    """Container for a unit and it's role"""
+
+    unit: str
+    role: Optional[str] = None
+
+
+class udict(Generic[KeyType], dict[KeyType, Scalar]):
     """Custom dict implementing __missing__."""
 
-    def __missing__(self, key: str):
+    def __missing__(self, key: KeyType) -> int:
         return 0
 
     def copy(self: Self) -> Self:
         return udict(self)
 
 
-class UnitsContainer(Mapping[str, Scalar]):
-    """The UnitsContainer stores the product of units and their respective
-    exponent and implements the corresponding operations.
+class BaseUnitsContainer(ABC, Generic[KeyType, KeyLikeType], Mapping[KeyType, Scalar]):
+    """Base class UnitsContainers, which store units
 
-    UnitsContainer is a read-only mapping. All operations (even in place ones)
+    BaseUnitsContainer is a read-only mapping. All operations (even in place ones)
     return new instances.
 
     Parameters
@@ -442,7 +462,7 @@ class UnitsContainer(Mapping[str, Scalar]):
 
     __slots__ = ("_d", "_hash", "_one", "_non_int_type")
 
-    _d: udict
+    _d: udict[KeyType]
     _hash: Optional[int]
     _one: Scalar
     _non_int_type: type
@@ -450,7 +470,7 @@ class UnitsContainer(Mapping[str, Scalar]):
     def __init__(
         self, *args: Any, non_int_type: Optional[type] = None, **kwargs: Any
     ) -> None:
-        if args and isinstance(args[0], UnitsContainer):
+        if args and isinstance(args[0], BaseUnitsContainer):
             default_non_int_type = args[0]._non_int_type
         else:
             default_non_int_type = float
@@ -462,23 +482,32 @@ class UnitsContainer(Mapping[str, Scalar]):
         else:
             self._one = self._non_int_type("1")
 
-        d = udict(*args, **kwargs)
-        self._d = d
-        for key, value in d.items():
-            if not isinstance(key, str):
-                raise TypeError(f"key must be a str, not {type(key)}")
+        temp_dict = dict(*args, **kwargs)
+        d = udict[KeyType]()
+
+        for key, value in temp_dict.items():
+            key = self.parse_container_key(key)
             if not isinstance(value, Number):
                 raise TypeError(f"value must be a number, not {type(value)}")
-            if not isinstance(value, int) and not isinstance(value, self._non_int_type):
+            if isinstance(value, (int, self._non_int_type)):
+                d[key] = value
+            else:
                 d[key] = self._non_int_type(value)
+
+        self._d = d
         self._hash = None
 
+    @abstractmethod
+    def parse_container_key(self, key: Any) -> KeyType:
+        """Check type and possibly coerce passed key to correct type"""
+        pass
+
     def copy(self: Self) -> Self:
-        """Create a copy of this UnitsContainer."""
+        """Create a copy of this BaseUnitsContainer."""
         return self.__copy__()
 
-    def add(self: Self, key: str, value: Number) -> Self:
-        """Create a new UnitsContainer adding value to
+    def add(self: Self, key: KeyLikeType, value: Number) -> Self:
+        """Create a new BaseUnitsContainer adding value to
         the value existing for a given key.
 
         Parameters
@@ -490,9 +519,10 @@ class UnitsContainer(Mapping[str, Scalar]):
 
         Returns
         -------
-        UnitsContainer
+        BaseUnitsContainer
             A copy of this container.
         """
+        key = self.parse_container_key(key)
         newval = self._d[key] + value
         new = self.copy()
         if newval:
@@ -502,8 +532,8 @@ class UnitsContainer(Mapping[str, Scalar]):
         new._hash = None
         return new
 
-    def remove(self: Self, keys: Iterable[str]) -> Self:
-        """Create a new UnitsContainer purged from given entries.
+    def remove(self: Self, keys: Iterable[KeyLikeType]) -> Self:
+        """Create a new BaseUnitsContainer purged from given entries.
 
         Parameters
         ----------
@@ -512,17 +542,18 @@ class UnitsContainer(Mapping[str, Scalar]):
 
         Returns
         -------
-        UnitsContainer
+        BaseUnitsContainer
             A copy of this container.
         """
+        keys = [self.parse_container_key(key) for key in keys]
         new = self.copy()
         for k in keys:
             new._d.pop(k)
         new._hash = None
         return new
 
-    def rename(self: Self, oldkey: str, newkey: str) -> Self:
-        """Create a new UnitsContainer in which an entry has been renamed.
+    def rename(self: Self, oldkey: KeyLikeType, newkey: KeyLikeType) -> Self:
+        """Create a new BaseUnitsContainer in which an entry has been renamed.
 
         Parameters
         ----------
@@ -533,25 +564,26 @@ class UnitsContainer(Mapping[str, Scalar]):
 
         Returns
         -------
-        UnitsContainer
+        BaseUnitsContainer
             A copy of this container.
         """
+        oldkey, newkey = (self.parse_container_key(key) for key in [oldkey, newkey])
         new = self.copy()
         new._d[newkey] = new._d.pop(oldkey)
         new._hash = None
         return new
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[KeyType]:
         return iter(self._d)
 
     def __len__(self) -> int:
         return len(self._d)
 
-    def __getitem__(self, key: str) -> Scalar:
-        return self._d[key]
+    def __getitem__(self, key: KeyLikeType) -> Scalar:
+        return self._d[self.parse_container_key(key)]
 
-    def __contains__(self, key: str) -> bool:
-        return key in self._d
+    def __contains__(self, key: KeyLikeType) -> bool:
+        return self.parse_container_key(key) in self._d
 
     def __hash__(self) -> int:
         if self._hash is None:
@@ -567,13 +599,13 @@ class UnitsContainer(Mapping[str, Scalar]):
         self._hash = None
 
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, UnitsContainer):
-            # UnitsContainer.__hash__(self) is not the same as hash(self); see
+        if isinstance(other, self.__class__):
+            # BaseUnitsContainer.__hash__(self) is not the same as hash(self); see
             # ParserHelper.__hash__ and __eq__.
             # Different hashes guarantee that the actual contents are different, but
             # identical hashes give no guarantee of equality.
             # e.g. in CPython, hash(-1) == hash(-2)
-            if UnitsContainer.__hash__(self) != UnitsContainer.__hash__(other):
+            if BaseUnitsContainer.__hash__(self) != BaseUnitsContainer.__hash__(other):
                 return False
             other = other._d
 
@@ -585,16 +617,15 @@ class UnitsContainer(Mapping[str, Scalar]):
 
             other = other._d
 
+        elif isinstance(other, dict):
+            other = {
+                self.parse_container_key(key): value for key, value in other.items()
+            }
+
         return dict.__eq__(self._d, other)
 
     def __str__(self) -> str:
         return self.__format__("")
-
-    def __repr__(self) -> str:
-        tmp = "{%s}" % ", ".join(
-            [f"'{key}': {value}" for key, value in sorted(self._d.items())]
-        )
-        return f"<UnitsContainer({tmp})>"
 
     def __format__(self, spec: str) -> str:
         return format_unit(self, spec)
@@ -613,8 +644,8 @@ class UnitsContainer(Mapping[str, Scalar]):
 
     def __mul__(self, other: Any):
         if not isinstance(other, self.__class__):
-            err = "Cannot multiply UnitsContainer by {}"
-            raise TypeError(err.format(type(other)))
+            err = f"Cannot multiply {self.__class__.__name__} by {type(other)}"
+            raise TypeError(err)
 
         new = self.copy()
         for key, value in other.items():
@@ -629,8 +660,8 @@ class UnitsContainer(Mapping[str, Scalar]):
 
     def __pow__(self, other: Any):
         if not isinstance(other, NUMERIC_TYPES):
-            err = "Cannot power UnitsContainer by {}"
-            raise TypeError(err.format(type(other)))
+            err = f"Cannot power {self.__class__.__name__} by {type(other)}"
+            raise TypeError(err)
 
         new = self.copy()
         for key, value in new._d.items():
@@ -640,8 +671,8 @@ class UnitsContainer(Mapping[str, Scalar]):
 
     def __truediv__(self, other: Any):
         if not isinstance(other, self.__class__):
-            err = "Cannot divide UnitsContainer by {}"
-            raise TypeError(err.format(type(other)))
+            err = f"Cannot divide {self.__class__.__name__} by {type(other)}"
+            raise TypeError(err)
 
         new = self.copy()
         for key, value in other.items():
@@ -654,10 +685,57 @@ class UnitsContainer(Mapping[str, Scalar]):
 
     def __rtruediv__(self, other: Any):
         if not isinstance(other, self.__class__) and other != 1:
-            err = "Cannot divide {} by UnitsContainer"
-            raise TypeError(err.format(type(other)))
+            err = f"Cannot divide {type(other)} by {self.__class__.__name__}"
+            raise TypeError(err)
 
         return self**-1
+
+
+class UnitsContainer(BaseUnitsContainer[str, str]):
+    """The UnitsContainer stores the product of units and their respective
+    exponent and implements the corresponding operations.
+
+    UnitsContainer is a read-only mapping. All operations (even in place ones)
+    return new instances.
+
+    Parameters
+    ----------
+    non_int_type
+        Numerical type used for non integer values.
+    """
+
+    def parse_container_key(self, key: Any) -> str:
+        if not isinstance(key, str):
+            raise TypeError(f"key must be a str, not {type(key)}")
+        return key
+
+    def __repr__(self) -> str:
+        tmp = "{%s}" % ", ".join(
+            [f"'{key}': {value}" for key, value in sorted(self._d.items())]
+        )
+        return f"<UnitsContainer({tmp})>"
+
+
+class UnitsRolesContainer(BaseUnitsContainer[UnitRole, UnitRoleKeyLike]):
+    def parse_container_key(self, key: UnitRoleKeyLike) -> UnitRole:
+        if isinstance(key, tuple):
+            unit, role = key
+            if not isinstance(unit, str):
+                raise TypeError(f"Unit must be a str, not {type(unit)}")
+            if role is not None and not isinstance(role, str):
+                raise TypeError(f"Role must be str or None, not {type(role)}")
+            return UnitRole(*key)
+        elif isinstance(key, str):
+            return UnitRole(key)
+        else:
+            raise TypeError(f"Key must be str or 2-tuple, not {type(key)}")
+
+    def _format_units(self) -> str:
+        unit_lst = [f"'{key.unit}': {value}" for key, value in sorted(self._d.items())]
+        return f"{{{', '.join(unit_lst)}}}"
+
+    def __repr__(self) -> str:
+        return f"<UnitsRolesContainer({self._format_units()})>"
 
 
 class ParserHelper(UnitsContainer):
