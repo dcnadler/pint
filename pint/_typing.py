@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, Union, Protocol
 from decimal import Decimal
 from fractions import Fraction
+from typing import TYPE_CHECKING, Any, Callable, Protocol, TypeVar, Union
 
-from .compat import TypeAlias, Never
+from .compat import Never, TypeAlias
 
 if TYPE_CHECKING:
     from .facets.plain import PlainQuantity as Quantity
